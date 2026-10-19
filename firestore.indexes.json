@@ -1,0 +1,33 @@
+{
+  "fieldOverrides": [],
+  "indexes": [
+    {
+      "queryScope": "COLLECTION",
+      "collectionGroup": "reminderOccurrences",
+      "fields": [
+        {
+          "order": "ASCENDING",
+          "fieldPath": "status"
+        },
+        {
+          "order": "ASCENDING",
+          "fieldPath": "scheduledTime"
+        }
+      ]
+    },
+    {
+      "queryScope": "COLLECTION_GROUP",
+      "collectionGroup": "reminderOccurrences",
+      "fields": [
+        {
+          "order": "ASCENDING",
+          "fieldPath": "status"
+        },
+        {
+          "order": "ASCENDING",
+          "fieldPath": "nextNotifyAt"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,180 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function authed() { return request.auth != null; }
+    function owner(uid) { return authed() && request.auth.uid == uid; }
+    function caregiver() {
+      return authed() && user(request.auth.uid).role == 'caregiver';
+    }
+    function user(uid) {
+      return get(/databases/$(database)/documents/users/$(uid)).data;
+    }
+    function patientSelf(patientId) {
+      return authed() && (
+        request.auth.uid == patientId ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         user(request.auth.uid).role == 'patient' &&
+         ('patientId' in user(request.auth.uid)) &&
+         user(request.auth.uid).patientId == patientId) ||
+        (exists(/databases/$(database)/documents/patients/$(patientId)) &&
+         get(/databases/$(database)/documents/patients/$(patientId)).data.ownerUid == request.auth.uid)
+      );
+    }
+    function activeLink(patientId) {
+      return authed() && (
+        (exists(/databases/$(database)/documents/links/$(patientId + '_' + request.auth.uid)) &&
+         get(/databases/$(database)/documents/links/$(patientId + '_' + request.auth.uid)).data.status == 'active') ||
+        (exists(/databases/$(database)/documents/caregiverLinks/$(request.auth.uid)/patients/$(patientId)) &&
+         get(/databases/$(database)/documents/caregiverLinks/$(request.auth.uid)/patients/$(patientId)).data.status == 'active')
+      );
+    }
+    function linked(patientId) {
+      return patientSelf(patientId) || activeLink(patientId);
+    }
+    function primaryCaregiver(patientId) {
+      return activeLink(patientId) && (
+        (exists(/databases/$(database)/documents/links/$(patientId + '_' + request.auth.uid)) &&
+         get(/databases/$(database)/documents/links/$(patientId + '_' + request.auth.uid)).data.role == 'primary') ||
+        (exists(/databases/$(database)/documents/caregiverLinks/$(request.auth.uid)/patients/$(patientId)) &&
+         get(/databases/$(database)/documents/caregiverLinks/$(request.auth.uid)/patients/$(patientId)).data.role == 'primary')
+      );
+    }
+
+    match /users/{uid} {
+      allow read: if owner(uid);
+      allow create: if owner(uid) &&
+        request.resource.data.role in ['patient', 'caregiver'] &&
+        request.resource.data.email is string &&
+        request.resource.data.createdAt is timestamp;
+      allow update: if owner(uid) &&
+        request.resource.data.role == resource.data.role &&
+        (!('patientId' in resource.data) ||
+          request.resource.data.patientId == resource.data.patientId);
+      allow delete: if false;
+    }
+
+    match /emailIndex/{email} {
+      allow read: if authed();
+      allow create: if authed() && request.resource.data.uid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    match /patientCodes/{patientId} {
+      allow get: if authed();
+      allow create: if authed() && request.resource.data.ownerUid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    match /patientPrimary/{patientId} {
+      allow get: if authed();
+      allow create: if authed() &&
+        request.resource.data.caregiverUid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    match /patients/{patientId} {
+      allow read: if linked(patientId) || caregiver();
+      allow create: if authed() && request.resource.data.ownerUid == request.auth.uid;
+      allow update: if (
+        owner(resource.data.ownerUid) &&
+        request.resource.data.ownerUid == resource.data.ownerUid
+      ) || (
+        caregiver() &&
+        request.resource.data.ownerUid == resource.data.ownerUid &&
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['primaryCaregiverUid', 'secondaryCount']) &&
+        (
+          (resource.data.primaryCaregiverUid == null &&
+            request.resource.data.primaryCaregiverUid == request.auth.uid) ||
+          (resource.data.primaryCaregiverUid != null &&
+            request.resource.data.secondaryCount == resource.data.secondaryCount + 1)
+        )
+      );
+      allow delete: if false;
+    }
+
+    match /links/{linkId} {
+      allow read: if caregiver() || patientSelf(resource.data.patientId);
+      allow create: if caregiver() &&
+        request.resource.data.caregiverUid == request.auth.uid &&
+        request.resource.data.patientId is string &&
+        (
+          (request.resource.data.role == 'primary' &&
+            request.resource.data.status == 'active' &&
+            getAfter(/databases/$(database)/documents/patientPrimary/$(request.resource.data.patientId)).data.caregiverUid == request.auth.uid) ||
+          (request.resource.data.role == 'secondary' &&
+            request.resource.data.status == 'pending' &&
+            exists(/databases/$(database)/documents/patientPrimary/$(request.resource.data.patientId)) &&
+            get(/databases/$(database)/documents/patientPrimary/$(request.resource.data.patientId)).data.caregiverUid != request.auth.uid)
+        );
+      allow update: if caregiver() &&
+        primaryCaregiver(resource.data.patientId) &&
+        resource.data.role == 'secondary' &&
+        resource.data.status == 'pending' &&
+        request.resource.data.status == 'active' &&
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['status', 'respondedAt']);
+      allow delete: if false;
+    }
+
+    match /caregiverLinks/{caregiverUid}/patients/{patientId} {
+      allow read: if owner(caregiverUid);
+      allow create, update: if (owner(caregiverUid) || primaryCaregiver(patientId)) &&
+        request.resource.data.patientId == patientId &&
+        request.resource.data.role in ['primary', 'secondary'] &&
+        request.resource.data.status in ['active', 'pending'];
+      allow delete: if owner(caregiverUid) || primaryCaregiver(patientId);
+    }
+
+    match /patients/{patientId}/reminders/{reminderId} {
+      allow read: if linked(patientId);
+      allow create, update, delete: if primaryCaregiver(patientId);
+    }
+
+    match /patients/{patientId}/reminderOccurrences/{occurrenceId} {
+      allow read: if linked(patientId);
+      allow create, update, delete: if primaryCaregiver(patientId);
+      allow update: if patientSelf(patientId) &&
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['status', 'snoozedUntil', 'snoozeCount', 'repeatCount', 'shownTime']);
+    }
+
+    match /patients/{patientId}/reminderEvents/{eventId} {
+      allow read: if linked(patientId);
+      allow create: if patientSelf(patientId);
+      allow update, delete: if false;
+    }
+
+    match /patients/{patientId}/safeZones/{zoneId} {
+      allow read: if linked(patientId);
+      allow create, update: if primaryCaregiver(patientId);
+      allow delete: if false;
+    }
+
+    match /patients/{patientId}/alerts/{alertId} {
+      allow read: if linked(patientId);
+      allow create: if patientSelf(patientId);
+      allow update: if activeLink(patientId) &&
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['acknowledged', 'acknowledgedBy', 'acknowledgedAt']);
+      allow delete: if false;
+    }
+
+    match /patients/{patientId}/weeks/{weekId} {
+      allow read: if linked(patientId);
+      allow write: if false;
+    }
+
+    match /patients/{patientId}/contacts/{contactId} {
+      allow read, create, update, delete: if linked(patientId) || caregiver();
+    }
+
+    match /patients/{patientId}/refills/{refillId} {
+      allow read, create, update, delete: if linked(patientId) || caregiver();
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

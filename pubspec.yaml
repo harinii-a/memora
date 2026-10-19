@@ -1,0 +1,56 @@
+name: memora
+description: "Memora — Dementia care and behavioral monitoring app."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.7.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+
+  # Firebase SDKs
+  firebase_core: ^3.0.0
+  firebase_auth: ^5.0.0
+  cloud_firestore: ^5.0.0
+  cloud_functions: ^5.0.0
+  firebase_messaging: ^15.0.0
+  firebase_storage: ^12.0.0
+
+  # State Management
+  flutter_riverpod: ^2.5.1
+
+  # UI utilities
+  google_fonts: ^6.2.1
+  cached_network_image: ^3.3.1
+  image_picker: ^1.1.2
+  flutter_image_compress: ^2.3.0
+  badges: ^3.1.2
+
+  # Notifications
+  flutter_local_notifications: ^18.0.0
+  timezone: ^0.9.4
+
+  # Permissions
+  permission_handler: ^11.3.1
+  go_router: ^17.0.0
+  url_launcher: ^6.3.3
+  speech_to_text: ^7.5.0
+  flutter_tts: ^4.2.5
+  google_generative_ai: ^0.4.7
+  intl: ^0.20.3
+  http: ^1.2.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/
